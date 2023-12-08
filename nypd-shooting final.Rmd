@@ -1,0 +1,201 @@
+---
+title: "NYPD shooting"
+output: 
+  html_document: 
+    highlight: tango
+    theme: cerulean
+    df_print: kable
+date: "`r Sys.Date()`"
+---
+
+### Dataset used for this analysis
+
+-   NYPD Shooting Incident Data available on DATA.GOV
+
+-   Dataset used is a list of every shooting incident that occurred in NYC from 2006 to 2022
+
+-   Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence, and information related to suspects and victim demographics.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+# get data
+
+url_in <-"https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+shooting_raw <- read_csv(url_in)
+
+```
+
+```{r}
+# tidy data
+
+shooting <- shooting_raw %>% 
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         BORO = as_factor(BORO),
+         PERP_AGE_GROUP = as_factor(PERP_AGE_GROUP),
+         PERP_SEX = as_factor(PERP_SEX),
+         PERP_RACE = as_factor(PERP_RACE),
+         VIC_AGE_GROUP = as_factor(VIC_AGE_GROUP),
+         VIC_SEX = as_factor(VIC_SEX),
+         VIC_RACE = as_factor(VIC_RACE),
+         occur_year = year(OCCUR_DATE),
+         occur_month = factor(format(OCCUR_DATE, "%b"), levels = month.abb),
+         occur_hour = hour(OCCUR_TIME)) %>% 
+  janitor::clean_names()
+```
+
+#### Let's look at the summary of data first.
+
+```{r}
+summary(shooting)
+
+shooting %>% skimr::skim()
+```
+
+#### How many shooting incidents and deaths by year?
+
+```{r}
+shooting %>% 
+  group_by(occur_year) %>% 
+  summarise(cases = n(), deaths = sum(statistical_murder_flag)) %>% 
+  ggplot(aes(x = occur_year, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  expand_limits(y = 0) +
+  theme_minimal() +
+  labs(title = "New York Shooting Incidents by Year",
+       x = "Year",
+       y = "Cases")
+```
+
+
+You can see that cases were declining till 2019 but it came back up in 2020 and after. There is no significant change in the number of deaths.
+
+<br><br>
+
+
+#### How many shooting incidents and deaths by year by borough?
+```{r}
+shooting %>% 
+  group_by(occur_year, boro) %>% 
+  summarise(cases = n(), deaths = sum(statistical_murder_flag)) %>% 
+  ggplot(aes(x = occur_year, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  expand_limits(y = 0) +
+  facet_wrap(~boro) +
+  theme_minimal() +
+  labs(title = "Shooting Incidents Trend by Borough (2006-2022)",
+       x = "Year",
+       y = "Cases")
+
+
+```
+
+
+Brooklyn overall has the most shooting incidents and Staten Island has the least.
+
+
+<br><br>
+
+
+#### Is there a seasonality trend?
+```{r}
+shooting %>% 
+  count(occur_month) %>% 
+  ggplot(aes(occur_month, n)) +
+  geom_col(fill = "#AFEEEE") +
+  theme_minimal() +
+  labs(title = "Shooting Incidents per Month",
+       x = "Month",
+       y = "Cases")
+
+shooting %>% 
+  count(occur_month, occur_year) %>% 
+  ggplot(aes(occur_month, n)) +
+  geom_col(fill = "#AFEEEE") +
+  labs(title = "Seasonality Trend by Year",
+       x = "Month",
+       y = "Cases") +
+  facet_wrap(~occur_year) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank())
+```
+
+
+There is an increase over the summer months. And to make sure there is no outliers I broke it down by year. Here you can see the seasonality pattern exists every year.
+
+
+<br><br>
+
+#### Is there any pattern for time of day?
+```{r}
+shooting %>% 
+  group_by(occur_hour) %>% 
+  summarise(cases = n(), deaths = sum(statistical_murder_flag)) %>% 
+  ggplot(aes(x = occur_hour, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  expand_limits(y = 0) +
+  theme_minimal() +
+  labs(title = "Shooting Incidents by Hour",
+       x = "Hour",
+       y = "Cases")
+```
+
+
+
+The number of cases significantly decreases in the morning and during daytime. And it increases in the evening and highest around midnight.
+
+
+<br><br>
+
+```{r}
+
+# Fit a logistic regression model
+model <- glm(statistical_murder_flag ~ vic_sex + vic_race, 
+             data = shooting, 
+             family = "binomial")
+
+# Summary of the model
+summary(model)
+```
+
+```{r}
+
+# Create a dataframe with data for prediction
+prediction_data <- expand.grid(
+  vic_sex = levels(shooting$vic_sex),
+  vic_race = levels(shooting$vic_race)
+)
+
+# Predict probabilities using the fitted model
+prediction_data$predicted_prob <- predict(model, newdata = prediction_data, type = "response")
+
+# Create a bar plot of predicted probabilities
+prediction_data %>% 
+ggplot(aes(x = interaction(vic_sex, vic_race), y = predicted_prob)) +
+  geom_bar(stat = "identity", fill = "#AFEEEE") +
+  labs(title = "Predicted Probabilities of Murder Cases",
+       x = "Group",
+       y = "Predicted Probability") +
+  theme_minimal() +
+  coord_flip()
+```
+
+
+
+In this logistic regression model, Pacific Islander and White victims have a higher predicted probabilities for murder cases.
